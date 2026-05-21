@@ -1,4 +1,5 @@
-import { SCREENSHOTS_PER_GAME, type ParsedScore } from './constants';
+import type { ParsedScore } from './types';
+import { SCREENSHOTS_PER_GAME } from './constants';
 
 // Accepts formats: "2-1", "2-0", "3-2", etc.
 const SCORE_REGEX = /^(\d+)-(\d+)$/;
