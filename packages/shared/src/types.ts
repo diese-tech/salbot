@@ -43,8 +43,15 @@ export interface MatchResultPayload {
 }
 
 export interface ReschedulePayload {
-  newScheduledAt: string;
+  newDate: string;
+  newTime: string;
   reason?: string;
+}
+
+export interface AdminReviewPayload {
+  issueType: 'score_dispute' | 'scheduling_issue' | 'eligibility_concern' | 'other';
+  description: string;
+  relatedMatchId?: string;
 }
 
 export interface AliasChangePayload {

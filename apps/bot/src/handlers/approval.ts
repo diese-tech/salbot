@@ -1,0 +1,305 @@
+// Approval pipeline: shared logic for Approve / Deny / Needs Info button flows.
+// Each action is atomic — only the first admin to click wins.
+
+import type { ButtonInteraction, ModalSubmitInteraction, Client, TextChannel } from 'discord.js';
+import { ModalBuilder, ActionRowBuilder, TextInputBuilder, TextInputStyle, EmbedBuilder } from 'discord.js';
+import {
+  getPendingAction,
+  claimPendingActionForApproval,
+  denyPendingAction,
+  needsInfoPendingAction,
+  writeAuditLog,
+  getMatchById,
+  completeMatch,
+  rescheduleMatch,
+} from '@salbot/db';
+import { parseScore } from '@salbot/shared';
+import type { MatchResultPayload, ReschedulePayload } from '@salbot/shared';
+import { db } from '../lib/db';
+import { getAdminReviewChannelId, getResultsChannelId, getReschedulesChannelId } from '../lib/channels';
+import {
+  applyApprovedStatus,
+  applyDeniedStatus,
+  applyNeedsInfoStatus,
+} from '../lib/embeds';
+import { removeActiveProofThread } from '../lib/proof-thread';
+
+// ── Approve button ────────────────────────────────────────────────────────────
+
+export async function handleApproveButton(interaction: ButtonInteraction, pendingActionId: string) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const claimed = await claimPendingActionForApproval(db, pendingActionId, interaction.user.id);
+  if (!claimed) {
+    await interaction.editReply('This action was already processed by another admin.');
+    return;
+  }
+
+  const pendingAction = await getPendingAction(db, pendingActionId);
+  if (!pendingAction) {
+    await interaction.editReply('Pending action not found.');
+    return;
+  }
+
+  try {
+    if (pendingAction.type === 'match_result') {
+      await approveMatchResult(interaction, pendingAction);
+    } else if (pendingAction.type === 'reschedule') {
+      await approveReschedule(interaction, pendingAction);
+    } else if (pendingAction.type === 'admin_review') {
+      await resolveAdminReview(interaction, pendingAction);
+    }
+
+    await writeAuditLog(db, {
+      actionType: 'pending_action_approved',
+      entityType: 'pending_action',
+      entityId: pendingActionId,
+      actorDiscordId: interaction.user.id,
+      pendingActionId,
+      newValueJson: { status: 'approved' },
+    });
+
+    await updateEmbeds(interaction.client, pendingAction, 'approved', interaction.user.id);
+    await interaction.editReply('✅ Approved.');
+  } catch (err) {
+    console.error('[approval] approve error:', err);
+    await interaction.editReply('An error occurred during approval. Check logs.');
+  }
+}
+
+// ── Deny button → modal ───────────────────────────────────────────────────────
+
+export async function handleDenyButton(interaction: ButtonInteraction, pendingActionId: string) {
+  const modal = new ModalBuilder()
+    .setCustomId(`modal_deny:${pendingActionId}`)
+    .setTitle('Deny — Reason Required')
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('reason')
+          .setLabel('Reason for denial')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(500)
+      )
+    );
+  await interaction.showModal(modal);
+}
+
+export async function handleDenyModal(interaction: ModalSubmitInteraction, pendingActionId: string) {
+  await interaction.deferReply({ ephemeral: true });
+  const reason = interaction.fields.getTextInputValue('reason');
+
+  const denied = await denyPendingAction(db, pendingActionId, interaction.user.id, reason);
+  if (!denied) {
+    await interaction.editReply('This action was already processed by another admin.');
+    return;
+  }
+
+  const pendingAction = await getPendingAction(db, pendingActionId);
+  if (!pendingAction) {
+    await interaction.editReply('Pending action not found.');
+    return;
+  }
+
+  await writeAuditLog(db, {
+    actionType: 'pending_action_denied',
+    entityType: 'pending_action',
+    entityId: pendingActionId,
+    actorDiscordId: interaction.user.id,
+    pendingActionId,
+    newValueJson: { status: 'denied', reason },
+  });
+
+  await updateEmbeds(interaction.client, pendingAction, 'denied', interaction.user.id, reason);
+  await notifyCaptain(interaction.client, pendingAction.requested_by_discord_id, 'denied', reason);
+  await interaction.editReply('❌ Denied.');
+}
+
+// ── Needs Info button → modal ─────────────────────────────────────────────────
+
+export async function handleNeedsInfoButton(interaction: ButtonInteraction, pendingActionId: string) {
+  const modal = new ModalBuilder()
+    .setCustomId(`modal_needs_info:${pendingActionId}`)
+    .setTitle('Needs Info')
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('note')
+          .setLabel('What info is needed from the captain?')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(500)
+      )
+    );
+  await interaction.showModal(modal);
+}
+
+export async function handleNeedsInfoModal(interaction: ModalSubmitInteraction, pendingActionId: string) {
+  await interaction.deferReply({ ephemeral: true });
+  const note = interaction.fields.getTextInputValue('note');
+
+  const marked = await needsInfoPendingAction(db, pendingActionId, interaction.user.id, note);
+  if (!marked) {
+    await interaction.editReply('This action was already processed by another admin.');
+    return;
+  }
+
+  const pendingAction = await getPendingAction(db, pendingActionId);
+  if (!pendingAction) {
+    await interaction.editReply('Pending action not found.');
+    return;
+  }
+
+  await writeAuditLog(db, {
+    actionType: 'pending_action_needs_info',
+    entityType: 'pending_action',
+    entityId: pendingActionId,
+    actorDiscordId: interaction.user.id,
+    pendingActionId,
+    newValueJson: { status: 'pending_info', note },
+  });
+
+  await updateEmbeds(interaction.client, pendingAction, 'needs_info', interaction.user.id, note);
+  await notifyCaptain(interaction.client, pendingAction.requested_by_discord_id, 'needs_info', note);
+  await interaction.editReply('⚠️ Marked as Needs Info.');
+}
+
+// ── Type-specific approval logic ──────────────────────────────────────────────
+
+async function approveMatchResult(
+  interaction: ButtonInteraction,
+  pendingAction: NonNullable<Awaited<ReturnType<typeof getPendingAction>>>
+) {
+  const payload = pendingAction.payload_json as unknown as MatchResultPayload;
+  const match = await getMatchById(db, pendingAction.match_id!);
+  if (!match) throw new Error(`Match ${pendingAction.match_id} not found`);
+
+  const parsed = parseScore(payload.score);
+  if (!parsed) throw new Error(`Invalid score in payload: ${payload.score}`);
+
+  const isWinnerHome = payload.winnerOrgId === match.home_org_id;
+  await completeMatch(db, match.id, {
+    winnerOrgId: payload.winnerOrgId,
+    homeScore: isWinnerHome ? parsed.winnerGames : parsed.loserGames,
+    awayScore: isWinnerHome ? parsed.loserGames : parsed.winnerGames,
+    score: payload.score,
+  });
+
+  await writeAuditLog(db, {
+    actionType: 'match_result_recorded',
+    entityType: 'match',
+    entityId: match.id,
+    actorDiscordId: interaction.user.id,
+    pendingActionId: pendingAction.id,
+    oldValueJson: { status: 'scheduled' },
+    newValueJson: { status: 'completed', winner_org_id: payload.winnerOrgId, score: payload.score },
+  });
+
+  // Archive proof thread
+  if (match.proof_thread_id) {
+    removeActiveProofThread(match.proof_thread_id);
+    try {
+      const thread = await interaction.client.channels.fetch(match.proof_thread_id);
+      if (thread && 'send' in thread) {
+        await (thread as TextChannel).send('✅ Match result approved. Thread is now closed.');
+        if ('setArchived' in thread) {
+          await (thread as unknown as { setArchived: (v: boolean) => Promise<void> }).setArchived(true);
+        }
+      }
+    } catch { /* non-critical */ }
+  }
+}
+
+async function approveReschedule(
+  interaction: ButtonInteraction,
+  pendingAction: NonNullable<Awaited<ReturnType<typeof getPendingAction>>>
+) {
+  const payload = pendingAction.payload_json as unknown as ReschedulePayload;
+  const match = await getMatchById(db, pendingAction.match_id!);
+  if (!match) throw new Error(`Match ${pendingAction.match_id} not found`);
+
+  await rescheduleMatch(db, match.id, { newDate: payload.newDate, newTime: payload.newTime });
+
+  await writeAuditLog(db, {
+    actionType: 'match_rescheduled',
+    entityType: 'match',
+    entityId: match.id,
+    actorDiscordId: interaction.user.id,
+    pendingActionId: pendingAction.id,
+    oldValueJson: { scheduled_date: match.scheduled_date, scheduled_time: match.scheduled_time },
+    newValueJson: { scheduled_date: payload.newDate, scheduled_time: payload.newTime },
+  });
+}
+
+async function resolveAdminReview(
+  _interaction: ButtonInteraction,
+  _pendingAction: NonNullable<Awaited<ReturnType<typeof getPendingAction>>>
+) {
+  // admin_review type: no match mutation — just marking resolved. Audit log written by caller.
+}
+
+// ── Embed updates ─────────────────────────────────────────────────────────────
+
+async function updateEmbeds(
+  client: Client,
+  pendingAction: NonNullable<Awaited<ReturnType<typeof getPendingAction>>>,
+  outcome: 'approved' | 'denied' | 'needs_info',
+  adminDiscordId: string,
+  note?: string
+) {
+  // Update admin review card
+  if (pendingAction.admin_review_message_id) {
+    try {
+      const adminChannel = await client.channels.fetch(getAdminReviewChannelId()) as TextChannel;
+      const adminMsg = await adminChannel.messages.fetch(pendingAction.admin_review_message_id);
+      const embed = EmbedBuilder.from(adminMsg.embeds[0]);
+
+      if (outcome === 'approved') applyApprovedStatus(embed, adminDiscordId);
+      else if (outcome === 'denied') applyDeniedStatus(embed, adminDiscordId, note!);
+      else applyNeedsInfoStatus(embed, adminDiscordId, note!);
+
+      await adminMsg.edit({ embeds: [embed], components: [] });
+    } catch { /* non-critical */ }
+  }
+
+  // Update public receipt
+  if (pendingAction.public_receipt_message_id && pendingAction.match_id) {
+    try {
+      const match = await getMatchById(db, pendingAction.match_id);
+      if (!match || !match.division_id) return;
+
+      const receiptChannelId = pendingAction.type === 'reschedule'
+        ? getReschedulesChannelId(match.division_id)
+        : getResultsChannelId(match.division_id);
+
+      const receiptChannel = await client.channels.fetch(receiptChannelId) as TextChannel;
+      const receiptMsg = await receiptChannel.messages.fetch(pendingAction.public_receipt_message_id);
+      const embed = EmbedBuilder.from(receiptMsg.embeds[0]);
+
+      if (outcome === 'approved') applyApprovedStatus(embed, adminDiscordId);
+      else if (outcome === 'denied') applyDeniedStatus(embed, adminDiscordId, note!);
+      else applyNeedsInfoStatus(embed, adminDiscordId, note!);
+
+      await receiptMsg.edit({ embeds: [embed] });
+    } catch { /* non-critical */ }
+  }
+}
+
+// ── Captain notification ──────────────────────────────────────────────────────
+
+async function notifyCaptain(
+  client: Client,
+  captainDiscordId: string,
+  outcome: 'denied' | 'needs_info',
+  note: string
+) {
+  try {
+    const user = await client.users.fetch(captainDiscordId);
+    if (outcome === 'denied') {
+      await user.send(`❌ Your pending action was denied.\n\n**Reason:** ${note}`);
+    } else {
+      await user.send(`⚠️ An admin needs more info on your pending action.\n\n**Info needed:** ${note}`);
+    }
+  } catch { /* DMs may be disabled — non-critical */ }
+}
