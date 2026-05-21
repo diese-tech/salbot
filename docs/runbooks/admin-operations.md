@@ -1,0 +1,99 @@
+# Admin Operations Runbook
+
+Common admin tasks and how to perform them correctly.
+
+---
+
+## Approving a Match Result
+
+**Via Discord:**
+1. Locate the pending review card in `#admin-review`
+2. Verify the match details (week, teams, score) match expectation
+3. Check proof thread link — verify screenshot count is reasonable
+4. Press **Approve**
+5. Bot updates public receipt to ✅ and disables review card buttons
+
+**Via Website:**
+1. Navigate to Admin → Review Queue
+2. Filter by type: `match_result`
+3. Open the pending action
+4. Review match details, proof thread link, screenshot count
+5. Click Approve
+6. System executes same mutation as Discord approval
+
+---
+
+## Denying a Match Result
+
+1. Open review card (Discord or website)
+2. Press **Deny**
+3. Enter reason (required)
+4. Captain is notified in the proof thread
+5. Captain may re-submit via `/report-result`
+
+---
+
+## Requesting More Information
+
+1. Press **⚠️ Needs Info** on the review card
+2. Enter the specific information needed (e.g., "Please re-upload screenshots — they appear to be from the wrong match")
+3. Captain is pinged in the proof thread with the note
+4. When captain has responded, return to the review card and approve or deny
+
+---
+
+## Correcting a Score After Approval
+
+Only use this if a score was approved incorrectly.
+
+1. Navigate to Admin → Matches → [Match ID]
+2. Click "Admin Override"
+3. Enter corrected score and winner
+4. Enter a reason (required — this is a compliance record)
+5. System writes `audit_log { action_type: 'admin_override', note: [reason] }`
+6. Original approved action remains in audit log — this is correct
+
+---
+
+## Linking a Player to an OCR Record
+
+When ForgeLens extracts stats but cannot match the in-game name to a player:
+
+1. Navigate to Admin → Stats → Pending Review
+2. Filter by `player_id IS NULL`
+3. For each unlinked record, search for the player by display name or Discord handle
+4. Select the matching player
+5. Approve the record
+
+---
+
+## Manually Entering Stats
+
+When a screenshot is unreadable or ForgeLens has failed:
+
+1. Navigate to Admin → Matches → [Match ID] → Stat Entry
+2. Select the player
+3. Enter stats manually
+4. Submit — creates a `pending_stat_record` with `source = 'manual'`, `confidence = 1.0`
+5. Approve via normal review flow
+
+---
+
+## Viewing Audit History for a Match
+
+1. Navigate to Admin → Matches → [Match ID] → Audit History
+2. Full timeline of all events: pending action created, approved, stats extracted, stats approved, any overrides
+
+This view is the authoritative record for any dispute.
+
+---
+
+## Correcting a Player's Team Assignment
+
+1. Navigate to Admin → Players → [Player]
+2. Click Edit
+3. Change `team_id`
+4. Add a note (reason for change)
+5. System writes audit log entry
+
+This does not retroactively change historical match records. If matches need to be re-attributed, that is a separate admin override on each affected match.

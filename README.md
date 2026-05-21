@@ -1,0 +1,209 @@
+# salbot
+
+**SAL League Operations Platform**
+
+A lightweight competition operations platform for the SAL league. This is not a Discord bot — Discord is the workflow intake layer. The system is a full operations stack: match lifecycle management, evidence collection, admin approval pipelines, OCR-assisted stat extraction, and compliance-grade audit logging.
+
+---
+
+## Platform Identity
+
+This platform exists to solve three operational problems:
+
+1. **Accountability** — every match result, reschedule, and admin action must be traceable, attributable, and recoverable.
+2. **Compliance** — Hi-Rez tournament and prizing requirements demand timestamped evidence, screenshot archives, and auditable receipts.
+3. **Scale** — manual Discord moderation does not scale. Structured workflows reduce admin cognitive load and surface the right information at the right time.
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                   DISCORD (Workflow UI)                  │
+│  Captain commands → public receipts → admin review       │
+└────────────────────────┬────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────┐
+│               SUPABASE (Source of Truth)                 │
+│  matches · schedules · players · pending_actions         │
+│  audit_logs · standings · evidence references            │
+└──────────┬──────────────────────┬───────────────────────┘
+           │                      │
+           ▼                      ▼
+┌──────────────────┐   ┌──────────────────────────────────┐
+│    FORGELENS     │   │       WEBSITE (Control Center)   │
+│  OCR · parsing   │   │  admin queue · audit history     │
+│  stat extraction │   │  score corrections · stat review │
+│  confidence score│   │  standings · player/team pages   │
+└──────────────────┘   └──────────────────────────────────┘
+```
+
+### Component Responsibilities
+
+| Component | Role |
+|-----------|------|
+| **Supabase** | Authoritative state. Owns all entities, relationships, lifecycle, identifiers. |
+| **Discord Bot** | Workflow intake. Captain commands, public receipts, admin review cards, proof threads. |
+| **Website** | Operational control center. Complex edits, audit history, stat review, corrections. |
+| **ForgeLens** | OCR processor. Extracts stats from screenshots, generates confidence scores, creates pending stat records for review. |
+
+**Discord is not a database. Supabase is.**
+
+---
+
+## Why Not a Bot
+
+Standard Discord bots process messages and react to events. This platform uses Discord as a structured form-entry and receipt-delivery surface. The actual state of the league — matches, schedules, standings, player stats — lives entirely in Supabase. Discord posts are receipts, not records.
+
+This distinction matters for:
+
+- **Recovery** — if the bot restarts, no data is lost. Supabase has everything.
+- **Auditability** — every change is traceable regardless of Discord message history.
+- **Correctness** — dropdown-driven match selection eliminates typos and fuzzy matching ambiguity.
+- **Compliance** — public Discord posts become timestamped evidence archives, not the source of truth.
+
+---
+
+## Core Workflows
+
+### `/report-result`
+
+Captain selects eligible match from Supabase-driven dropdown → enters winner + score → system creates:
+
+1. Public embed in `#match-results-[division]`
+2. Dedicated proof thread for screenshot upload
+3. Admin review card in `#admin-review`
+4. Pending action in Supabase
+5. Audit log entry
+
+Screenshots are uploaded to the proof thread, not inline to the command. This supports 6–10 screenshots per match without degrading UX.
+
+### `/reschedule`
+
+Captain selects scheduled match → requests new date/time → admin review workflow triggered.
+
+### `/request-admin-review`
+
+Catch-all escalation. Creates an admin review card for any issue not covered by structured commands.
+
+---
+
+## Command Philosophy
+
+**Commands are the official workflow. Message scanning is the safety net.**
+
+Captains are expected to use slash commands. The bot may optionally scan channels for fallback detection, but scanned messages never become authoritative without a corresponding pending action processed through the normal pipeline.
+
+This means:
+- Every legitimate action has a corresponding `pending_actions` record.
+- Admins always review before mutations occur.
+- No state changes happen silently.
+
+---
+
+## Evidence System
+
+Every actionable command produces two posts:
+
+| Post | Location | Purpose |
+|------|----------|---------|
+| Public receipt | `#match-results-[division]` or `#reschedules-[division]` | Transparency, compliance, prizing verification |
+| Admin review card | `#admin-review` | Triage, approval, workflow actions |
+
+Proof threads attached to match reports:
+- Track screenshot upload progress (`0/6 uploaded → 4/6 → ✅ complete`)
+- Are monitored by ForgeLens for OCR processing
+- Are stored as evidence references in Supabase Storage
+
+---
+
+## Status Emoji Semantics
+
+| Emoji | Meaning |
+|-------|---------|
+| 📝 | Received / under review |
+| 📸 | Awaiting proof upload |
+| ⚠️ | Needs info |
+| ✅ | Approved |
+| ❌ | Denied |
+| 🔁 | Revised |
+
+---
+
+## OCR Pipeline
+
+ForgeLens watches proof threads, processes screenshots through OCR, and generates pending stat records with confidence scores. **OCR never directly mutates official stats.** Every extracted stat passes through admin review before it becomes official.
+
+```
+Screenshot uploaded
+→ ForgeLens OCR
+→ Confidence score generated
+→ Pending stat record created
+→ Admin review / manual correction
+→ Official stat written
+```
+
+---
+
+## Monorepo Structure
+
+```
+salbot/
+├── apps/
+│   ├── bot/              # Discord bot (Discord.js, TypeScript)
+│   └── web/              # Next.js admin panel
+├── packages/
+│   ├── db/               # Supabase client, generated types, query helpers
+│   └── shared/           # Shared types, constants, utility functions
+├── services/
+│   └── forgelens/        # OCR/stat extraction service
+├── docs/                 # All documentation
+├── database/
+│   ├── migrations/       # SQL migration files
+│   ├── schema/           # Schema reference docs and ERDs
+│   └── seeds/            # Development seed data
+├── infra/
+│   └── supabase/         # Supabase config, storage policies, RLS rules
+├── scripts/
+│   ├── setup/            # Environment setup scripts
+│   └── maintenance/      # Operational maintenance scripts
+└── .github/
+    ├── workflows/        # CI/CD
+    └── ISSUE_TEMPLATE/   # Issue templates
+```
+
+---
+
+## Operational Goals
+
+- **Zero silent mutations** — every state change is logged to `audit_logs`.
+- **Human-in-the-loop approvals** — no automated approval of match results or stat records.
+- **Recovery by default** — every action is reversible or correctable via the website panel.
+- **Compliance-grade receipts** — public Discord posts constitute Hi-Rez acceptable evidence archives.
+- **Multi-league ready** — all entities are scoped by `division_id`. Adding a new league requires no schema changes.
+
+---
+
+## Documentation
+
+Full documentation lives in [`docs/`](docs/). Start with:
+
+- [`docs/architecture/overview.md`](docs/architecture/overview.md) — system design
+- [`docs/onboarding/getting-started.md`](docs/onboarding/getting-started.md) — contributor setup
+- [`docs/workflows/discord-workflows.md`](docs/workflows/discord-workflows.md) — captain and admin workflows
+- [`docs/database/schema.md`](docs/database/schema.md) — data model
+- [`docs/adrs/`](docs/adrs/) — architecture decision records
+
+---
+
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+---
+
+## License
+
+Internal — diese-tech. All rights reserved.
