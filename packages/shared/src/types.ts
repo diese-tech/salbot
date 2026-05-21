@@ -9,10 +9,9 @@ export type PendingActionStatus =
 
 export type MatchStatus =
   | 'scheduled'
+  | 'live'
   | 'completed'
-  | 'forfeited'
-  | 'cancelled'
-  | 'pending_result';
+  | 'postponed';
 
 export type AuditActionType =
   | 'pending_action_created'
@@ -37,7 +36,7 @@ export interface ParsedScore {
 }
 
 export interface MatchResultPayload {
-  winnerTeamId: string;
+  winnerOrgId: string;
   score: string;
   parsed: ParsedScore;
 }

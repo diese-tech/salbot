@@ -1,18 +1,21 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-export async function getEligibleMatchesForCaptain(db: SupabaseClient, teamId: string) {
+export async function getEligibleMatchesForCaptain(db: SupabaseClient, orgId: string) {
+  const today = new Date().toISOString().split('T')[0];
+
   const { data, error } = await db
     .from('matches')
     .select(`
-      id, external_id, week, scheduled_at, status,
-      team_a:teams!team_a_id(id, name),
-      team_b:teams!team_b_id(id, name),
-      division:divisions(id, name, slug)
+      id, week, scheduled_date, scheduled_time, status,
+      home_org:orgs!home_org_id(id, name, tag),
+      away_org:orgs!away_org_id(id, name, tag),
+      division:divisions(id, name)
     `)
-    .or(`team_a_id.eq.${teamId},team_b_id.eq.${teamId}`)
+    .or(`home_org_id.eq.${orgId},away_org_id.eq.${orgId}`)
     .eq('status', 'scheduled')
-    .gte('scheduled_at', new Date().toISOString())
-    .order('scheduled_at');
+    .gte('scheduled_date', today)
+    .order('scheduled_date')
+    .order('scheduled_time');
 
   if (error) return [];
   return data ?? [];
