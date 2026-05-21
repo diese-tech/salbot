@@ -1,4 +1,4 @@
-export type PendingActionType = 'match_result' | 'reschedule' | 'admin_review';
+export type PendingActionType = 'match_result' | 'reschedule' | 'admin_review' | 'alias_change';
 
 export type PendingActionStatus =
   | 'pending'
@@ -24,6 +24,7 @@ export type AuditActionType =
   | 'stat_approved'
   | 'stat_rejected'
   | 'stat_corrected'
+  | 'ign_updated'
   | 'admin_override';
 
 export type StatRecordStatus = 'pending' | 'approved' | 'rejected' | 'corrected' | 'superseded';
@@ -44,4 +45,11 @@ export interface MatchResultPayload {
 export interface ReschedulePayload {
   newScheduledAt: string;
   reason?: string;
+}
+
+export interface AliasChangePayload {
+  targetPlayerId: string;
+  oldIgn: string;
+  newIgn: string;
+  proofScreenshotUrl: string;
 }
