@@ -1,16 +1,21 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+const MATCH_FIELDS = `
+  id, week, scheduled_date, scheduled_time, status,
+  home_org_id, away_org_id, home_score, away_score,
+  winner_org_id, score, proof_thread_id, proof_thread_url,
+  screenshot_count, screenshot_expected, division_id,
+  home_org:orgs!home_org_id(id, name, tag),
+  away_org:orgs!away_org_id(id, name, tag),
+  division:divisions(id, name)
+`;
+
 export async function getEligibleMatchesForCaptain(db: SupabaseClient, orgId: string) {
   const today = new Date().toISOString().split('T')[0];
 
   const { data, error } = await db
     .from('matches')
-    .select(`
-      id, week, scheduled_date, scheduled_time, status,
-      home_org:orgs!home_org_id(id, name, tag),
-      away_org:orgs!away_org_id(id, name, tag),
-      division:divisions(id, name)
-    `)
+    .select(MATCH_FIELDS)
     .or(`home_org_id.eq.${orgId},away_org_id.eq.${orgId}`)
     .eq('status', 'scheduled')
     .gte('scheduled_date', today)
@@ -19,4 +24,92 @@ export async function getEligibleMatchesForCaptain(db: SupabaseClient, orgId: st
 
   if (error) return [];
   return data ?? [];
+}
+
+export async function getMatchById(db: SupabaseClient, matchId: string) {
+  const { data, error } = await db
+    .from('matches')
+    .select(MATCH_FIELDS)
+    .eq('id', matchId)
+    .single();
+
+  if (error) return null;
+  return data;
+}
+
+export async function completeMatch(
+  db: SupabaseClient,
+  matchId: string,
+  params: {
+    winnerOrgId: string;
+    homeScore: number;
+    awayScore: number;
+    score: string;
+  }
+) {
+  const { error } = await db
+    .from('matches')
+    .update({
+      status: 'completed',
+      winner_org_id: params.winnerOrgId,
+      home_score: params.homeScore,
+      away_score: params.awayScore,
+      score: params.score,
+    })
+    .eq('id', matchId);
+
+  if (error) throw error;
+}
+
+export async function rescheduleMatch(
+  db: SupabaseClient,
+  matchId: string,
+  params: { newDate: string; newTime: string }
+) {
+  const { error } = await db
+    .from('matches')
+    .update({
+      scheduled_date: params.newDate,
+      scheduled_time: params.newTime,
+    })
+    .eq('id', matchId);
+
+  if (error) throw error;
+}
+
+export async function setProofThread(
+  db: SupabaseClient,
+  matchId: string,
+  threadId: string,
+  threadUrl: string,
+  screenshotExpected: number
+) {
+  const { error } = await db
+    .from('matches')
+    .update({
+      proof_thread_id: threadId,
+      proof_thread_url: threadUrl,
+      screenshot_expected: screenshotExpected,
+    })
+    .eq('id', matchId);
+
+  if (error) throw error;
+}
+
+export async function incrementScreenshotCount(db: SupabaseClient, matchId: string) {
+  const { error } = await db.rpc('increment_screenshot_count', { match_id: matchId });
+  if (error) {
+    // Fallback: manual increment if RPC not available
+    const { data: match } = await db
+      .from('matches')
+      .select('screenshot_count')
+      .eq('id', matchId)
+      .single();
+    if (match) {
+      await db
+        .from('matches')
+        .update({ screenshot_count: (match.screenshot_count ?? 0) + 1 })
+        .eq('id', matchId);
+    }
+  }
 }
