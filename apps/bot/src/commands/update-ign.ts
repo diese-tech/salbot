@@ -5,7 +5,7 @@
 // Admins (in admin_users) bypass the channel check and can target any player via the
 // optional `player` option.
 
-import type { CommandInteraction } from 'discord.js';
+import type { ChatInputCommandInteraction } from 'discord.js';
 
 export const data = {
   name: 'update-ign',
@@ -32,7 +32,7 @@ export const data = {
   ],
 } as const;
 
-export async function execute(_interaction: CommandInteraction) {
+export async function execute(_interaction: ChatInputCommandInteraction) {
   // Phase 2 implementation stub.
   // Full flow:
   //   1. Resolve target player (invoker or admin-provided user option)

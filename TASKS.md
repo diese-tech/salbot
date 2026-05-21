@@ -60,6 +60,8 @@ See `ROADMAP.md` Phase 1 for full scope.
 
 - [ ] `/reschedule` command
 - [ ] `/request-admin-review` command
+- [ ] `/rules` command (OpenRouter LLM over `docs/rules/`)
+- [ ] `/update-ign` command (IGN change with proof + admin approval)
 - [ ] Bot deployment configuration
 
 ## Operations / Stability

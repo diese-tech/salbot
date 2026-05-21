@@ -186,6 +186,38 @@ See `docs/adrs/ADR-004-evidence-threads.md` for full reasoning.
 
 ---
 
+## 2025-05-21 — LLM Rules Assistant: Stuffed Context Over Vector RAG
+
+### Decision
+
+Use full-ruleset context injection ("stuffed context") instead of vector RAG for the `/rules` captain command.
+
+### Why
+
+The SAL rulebook is small (order of thousands of tokens). Stuffing the entire ruleset into a cached system prompt is simpler, cheaper, and more accurate than a retrieval pipeline at this scale. No pgvector, no embedding pipeline, no retrieval misses.
+
+### Expected Benefits
+
+- Captains get instant, consistent answers to rules questions without admin involvement
+- Admins maintain the ruleset in `docs/rules/` via standard code review
+- Prompt caching makes repeat queries near-free
+
+### Tradeoffs
+
+- Answers are advisory only — the system prompt enforces that admin rulings are final
+- If the ruleset ever approaches 50k tokens, retrieval becomes necessary
+
+### Alternatives Considered
+
+| Alternative | Why Rejected |
+|---|---|
+| Vector RAG + pgvector | Unnecessary complexity at rulebook scale |
+| Hardcoded FAQ responses | Can't handle novel questions; brittle to maintain |
+
+See `docs/adrs/ADR-007-llm-rules-assistant.md` for full reasoning.
+
+---
+
 # What Should Be Logged Here
 
 - Architecture decisions
