@@ -55,6 +55,8 @@ An admin approves a `/report-result` submission and `matches.status = 'completed
 
 - [ ] `/reschedule` — match dropdown + new time proposal + admin review
 - [ ] `/request-admin-review` — catch-all escalation
+- [ ] `/rules` — captain rules assistant backed by LLM (OpenRouter) over `docs/rules/`
+- [ ] `/update-ign` — IGN change request with screenshot proof + admin approval
 - [ ] Discord embed update reliability (stale message handling)
 - [ ] Error handling and captain-facing error messages
 - [ ] Bot deployment configuration (Railway / Fly / VPS)

@@ -58,6 +58,7 @@ status               text NOT NULL
 stats                jsonb
 discord_id           text UNIQUE             -- linked via OAuth
 profile_claimed      boolean NOT NULL DEFAULT false
+display_alias        text                    -- custom display name; NULL falls back to ign
 archived_at          timestamptz
 deletion_scheduled_at timestamptz
 ```
