@@ -1,0 +1,24 @@
+{
+  "name": "@salbot/bot",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "deploy:commands": "tsx scripts/deploy-commands.ts"
+  },
+  "dependencies": {
+    "discord.js": "^14.15.0",
+    "@salbot/db": "workspace:*",
+    "@salbot/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.0.0"
+  }
+}
