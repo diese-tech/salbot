@@ -18,6 +18,9 @@ import {
   handleDenyModal,
   handleNeedsInfoButton,
   handleNeedsInfoModal,
+  handleApproveStatButton,
+  handleRejectStatButton,
+  handleRejectStatModal,
 } from './handlers/approval';
 
 type CommandModule = {
@@ -47,7 +50,7 @@ client.once('ready', () => {
   console.log(`[bot] Admin review channel: ${process.env.CHANNEL_ADMIN_REVIEW ?? 'NOT SET'}`);
 });
 
-// ── Interaction handler ───────────────────────────────────────────────────────
+// ── Interaction handler ────────────────────────────────────────────────────────────
 
 client.on('interactionCreate', async (interaction) => {
   try {
@@ -73,10 +76,10 @@ client.on('interactionCreate', async (interaction) => {
 
     // Buttons
     if (interaction.isButton()) {
-      const [action, pendingActionId] = interaction.customId.split(':');
+      const [action, entityId] = interaction.customId.split(':');
 
       // Admin-only actions
-      if (['approve', 'deny', 'needs_info'].includes(action)) {
+      if (['approve', 'deny', 'needs_info', 'approve_stat', 'reject_stat'].includes(action)) {
         const isAdmin = await isAdminUser(db, interaction.user.id);
         if (!isAdmin) {
           await interaction.reply({ content: 'Only admins can use this button.', ephemeral: true });
@@ -84,9 +87,11 @@ client.on('interactionCreate', async (interaction) => {
         }
       }
 
-      if (action === 'approve') await handleApproveButton(interaction, pendingActionId);
-      else if (action === 'deny') await handleDenyButton(interaction, pendingActionId);
-      else if (action === 'needs_info') await handleNeedsInfoButton(interaction, pendingActionId);
+      if (action === 'approve') await handleApproveButton(interaction, entityId);
+      else if (action === 'deny') await handleDenyButton(interaction, entityId);
+      else if (action === 'needs_info') await handleNeedsInfoButton(interaction, entityId);
+      else if (action === 'approve_stat') await handleApproveStatButton(interaction, entityId);
+      else if (action === 'reject_stat') await handleRejectStatButton(interaction, entityId);
       return;
     }
 
@@ -103,6 +108,9 @@ client.on('interactionCreate', async (interaction) => {
       } else if (id.startsWith('modal_needs_info:')) {
         const pendingActionId = id.split(':')[1];
         await handleNeedsInfoModal(interaction, pendingActionId);
+      } else if (id.startsWith('modal_reject_stat:')) {
+        const statRecordId = id.split(':')[1];
+        await handleRejectStatModal(interaction, statRecordId);
       }
       return;
     }
@@ -116,7 +124,7 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
-// ── Proof thread screenshot tracking (Phase 1 stub) ──────────────────────────
+// ── Proof thread screenshot tracking (Phase 1 stub) ────────────────────────────────
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot || message.attachments.size === 0) return;

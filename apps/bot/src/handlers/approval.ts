@@ -12,6 +12,8 @@ import {
   getMatchById,
   completeMatch,
   rescheduleMatch,
+  approvePendingStatRecord,
+  rejectPendingStatRecord,
 } from '@salbot/db';
 import { parseScore } from '@salbot/shared';
 import type { MatchResultPayload, ReschedulePayload } from '@salbot/shared';
@@ -24,7 +26,7 @@ import {
 } from '../lib/embeds';
 import { removeActiveProofThread } from '../lib/proof-thread';
 
-// ── Approve button ────────────────────────────────────────────────────────────
+// ── Approve button ────────────────────────────────────────────────────────────────────
 
 export async function handleApproveButton(interaction: ButtonInteraction, pendingActionId: string) {
   await interaction.deferReply({ ephemeral: true });
@@ -67,7 +69,7 @@ export async function handleApproveButton(interaction: ButtonInteraction, pendin
   }
 }
 
-// ── Deny button → modal ───────────────────────────────────────────────────────
+// ── Deny button → modal ──────────────────────────────────────────────────────
 
 export async function handleDenyButton(interaction: ButtonInteraction, pendingActionId: string) {
   const modal = new ModalBuilder()
@@ -116,7 +118,7 @@ export async function handleDenyModal(interaction: ModalSubmitInteraction, pendi
   await interaction.editReply('❌ Denied.');
 }
 
-// ── Needs Info button → modal ─────────────────────────────────────────────────
+// ── Needs Info button → modal ───────────────────────────────────────────────────
 
 export async function handleNeedsInfoButton(interaction: ButtonInteraction, pendingActionId: string) {
   const modal = new ModalBuilder()
@@ -165,7 +167,82 @@ export async function handleNeedsInfoModal(interaction: ModalSubmitInteraction, 
   await interaction.editReply('⚠️ Marked as Needs Info.');
 }
 
-// ── Type-specific approval logic ──────────────────────────────────────────────
+// ── Approve stat record button ──────────────────────────────────────────────────────
+
+export async function handleApproveStatButton(interaction: ButtonInteraction, statRecordId: string) {
+  await interaction.deferReply({ ephemeral: true });
+
+  try {
+    await approvePendingStatRecord(db, statRecordId, interaction.user.id);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('already')) {
+      await interaction.editReply('This stat record was already processed.');
+      return;
+    }
+    if (msg.includes('game_number missing')) {
+      await interaction.editReply('❌ Cannot approve: `game_number` is missing from the OCR output. Correct the stat record first.');
+      return;
+    }
+    console.error('[approval] approve stat error:', err);
+    await interaction.editReply('An error occurred during stat approval. Check logs.');
+    return;
+  }
+
+  await writeAuditLog(db, {
+    actionType: 'stat_approved',
+    entityType: 'pending_stat_record',
+    entityId: statRecordId,
+    actorDiscordId: interaction.user.id,
+    newValueJson: { status: 'approved' },
+  });
+
+  await interaction.editReply('✅ Stat record approved and written to player_stats.');
+}
+
+// ── Reject stat record button → modal ──────────────────────────────────────────────
+
+export async function handleRejectStatButton(interaction: ButtonInteraction, statRecordId: string) {
+  const modal = new ModalBuilder()
+    .setCustomId(`modal_reject_stat:${statRecordId}`)
+    .setTitle('Reject Stat Record — Reason Required')
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('reason')
+          .setLabel('Reason for rejection')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(500)
+      )
+    );
+  await interaction.showModal(modal);
+}
+
+export async function handleRejectStatModal(interaction: ModalSubmitInteraction, statRecordId: string) {
+  await interaction.deferReply({ ephemeral: true });
+  const reason = interaction.fields.getTextInputValue('reason');
+
+  try {
+    await rejectPendingStatRecord(db, statRecordId, interaction.user.id, reason);
+  } catch (err) {
+    console.error('[approval] reject stat error:', err);
+    await interaction.editReply('An error occurred. Check logs.');
+    return;
+  }
+
+  await writeAuditLog(db, {
+    actionType: 'stat_rejected',
+    entityType: 'pending_stat_record',
+    entityId: statRecordId,
+    actorDiscordId: interaction.user.id,
+    newValueJson: { status: 'rejected', reason },
+  });
+
+  await interaction.editReply('❌ Stat record rejected.');
+}
+
+// ── Type-specific approval logic ──────────────────────────────────────────────────
 
 async function approveMatchResult(
   interaction: ButtonInteraction,
@@ -196,7 +273,6 @@ async function approveMatchResult(
     newValueJson: { status: 'completed', winner_org_id: payload.winnerOrgId, score: payload.score },
   });
 
-  // Archive proof thread
   if (match.proof_thread_id) {
     removeActiveProofThread(match.proof_thread_id);
     try {
@@ -239,7 +315,7 @@ async function resolveAdminReview(
   // admin_review type: no match mutation — just marking resolved. Audit log written by caller.
 }
 
-// ── Embed updates ─────────────────────────────────────────────────────────────
+// ── Embed updates ─────────────────────────────────────────────────────────────────
 
 async function updateEmbeds(
   client: Client,
@@ -248,7 +324,6 @@ async function updateEmbeds(
   adminDiscordId: string,
   note?: string
 ) {
-  // Update admin review card
   if (pendingAction.admin_review_message_id) {
     try {
       const adminChannel = await client.channels.fetch(getAdminReviewChannelId()) as TextChannel;
@@ -263,7 +338,6 @@ async function updateEmbeds(
     } catch { /* non-critical */ }
   }
 
-  // Update public receipt
   if (pendingAction.public_receipt_message_id && pendingAction.match_id) {
     try {
       const match = await getMatchById(db, pendingAction.match_id);
@@ -286,7 +360,7 @@ async function updateEmbeds(
   }
 }
 
-// ── Captain notification ──────────────────────────────────────────────────────
+// ── Captain notification ────────────────────────────────────────────────────────
 
 async function notifyCaptain(
   client: Client,
