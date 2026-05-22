@@ -8,7 +8,13 @@ type RealtimePayload = {
     id?: string;
     status?: string;
   };
+  old?: {
+    status?: string;
+  };
 };
+
+const postedRecapSessionIds = new Set<string>();
+const pendingRecapSessionIds = new Set<string>();
 
 export function subscribeToGodDraftRecaps(client: Client, db: SupabaseClient): unknown {
   return db
@@ -32,16 +38,24 @@ export async function handleGodDraftSessionComplete(
 ) {
   const sessionId = payload.new?.id;
   if (!sessionId || payload.new?.status !== 'complete') return false;
+  if (payload.old?.status === 'complete') return false;
+  if (postedRecapSessionIds.has(sessionId) || pendingRecapSessionIds.has(sessionId)) return false;
 
-  const recap = await getGodDraftRecapData(db, sessionId);
-  if (!recap?.session.matches) return false;
+  pendingRecapSessionIds.add(sessionId);
+  try {
+    const recap = await getGodDraftRecapData(db, sessionId);
+    if (!recap?.session.matches) return false;
 
-  const channelId = getResultsChannelId(recap.session.matches.division_id);
-  const channel = await client.channels.fetch(channelId);
-  if (!isSendableChannel(channel)) return false;
+    const channelId = getResultsChannelId(recap.session.matches.division_id);
+    const channel = await client.channels.fetch(channelId);
+    if (!isSendableChannel(channel)) return false;
 
-  await channel.send({ embeds: [buildGodDraftRecapEmbed(recap)] });
-  return true;
+    await channel.send({ embeds: [buildGodDraftRecapEmbed(recap)] });
+    postedRecapSessionIds.add(sessionId);
+    return true;
+  } finally {
+    pendingRecapSessionIds.delete(sessionId);
+  }
 }
 
 function isSendableChannel(channel: unknown): channel is { send: (message: { embeds: EmbedBuilder[] }) => Promise<unknown> } {
