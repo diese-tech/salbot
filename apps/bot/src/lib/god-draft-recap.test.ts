@@ -69,10 +69,29 @@ describe('god draft realtime handler', () => {
     process.env.CHANNEL_RESULTS_SOLAR = 'results-solar';
     const send = vi.fn();
     const client = { channels: { fetch: vi.fn(async () => ({ send })) } };
-    const handled = await handleGodDraftSessionComplete(client as never, {} as SupabaseClient, { new: { id: 'draft-1', status: 'complete' } });
+    const handled = await handleGodDraftSessionComplete(client as never, {} as SupabaseClient, { new: { id: 'draft-2', status: 'complete' }, old: { status: 'picking' } });
     expect(handled).toBe(true);
     expect(client.channels.fetch).toHaveBeenCalledWith('results-solar');
     expect(send).toHaveBeenCalledTimes(1);
     expect(send.mock.calls[0][0].embeds[0].toJSON().title).toContain('God Draft Complete');
+  });
+
+  it('does not repost when an already-complete session is updated again', async () => {
+    process.env.CHANNEL_RESULTS_SOLAR = 'results-solar';
+    const send = vi.fn();
+    const client = { channels: { fetch: vi.fn(async () => ({ send })) } };
+    const handled = await handleGodDraftSessionComplete(client as never, {} as SupabaseClient, { new: { id: 'draft-3', status: 'complete' }, old: { status: 'complete' } });
+    expect(handled).toBe(false);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('dedupes complete payloads when old row status is unavailable', async () => {
+    process.env.CHANNEL_RESULTS_SOLAR = 'results-solar';
+    const send = vi.fn();
+    const client = { channels: { fetch: vi.fn(async () => ({ send })) } };
+    const payload = { new: { id: 'draft-4', status: 'complete' } };
+    expect(await handleGodDraftSessionComplete(client as never, {} as SupabaseClient, payload)).toBe(true);
+    expect(await handleGodDraftSessionComplete(client as never, {} as SupabaseClient, payload)).toBe(false);
+    expect(send).toHaveBeenCalledTimes(1);
   });
 });
