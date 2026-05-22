@@ -6,10 +6,6 @@ export async function getCaptainByDiscordId(db: SupabaseClient, discordId: strin
   const { data, error } = await db
     .from('players')
     .select(PLAYER_FIELDS)
-export async function getCaptainByDiscordId(db: SupabaseClient, discordId: string) {
-  const { data, error } = await db
-    .from('players')
-    .select('id, discord_username, ign, org_id, is_captain, division_id')
     .eq('discord_id', discordId)
     .eq('is_captain', true)
     .single();
