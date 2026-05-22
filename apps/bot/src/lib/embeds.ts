@@ -1,5 +1,6 @@
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { STATUS_EMOJI } from '@salbot/shared';
+import type { GodDraftRecapData } from '@salbot/db';
 
 const COLOR = {
   pending: 0x5865f2,
@@ -174,4 +175,52 @@ export function applyNeedsInfoStatus(embed: EmbedBuilder, adminDiscordId: string
       { name: 'Info Needed', value: note },
     )
     .setTimestamp();
+}
+
+export function buildGodDraftRecapEmbed(recap: GodDraftRecapData) {
+  const match = recap.session.matches;
+  const home = match?.home_org;
+  const away = match?.away_org;
+  const homeLabel = home ? home.tag : 'Home';
+  const awayLabel = away ? away.tag : 'Away';
+  const homeOrgId = match?.home_org_id;
+  const awayOrgId = match?.away_org_id;
+
+  const homePicks = formatDraftRows(recap.picks.filter((pick) => pick.org_id === homeOrgId), true);
+  const awayPicks = formatDraftRows(recap.picks.filter((pick) => pick.org_id === awayOrgId), true);
+  const homeBans = formatDraftRows(recap.bans.filter((ban) => ban.org_id === homeOrgId), false);
+  const awayBans = formatDraftRows(recap.bans.filter((ban) => ban.org_id === awayOrgId), false);
+
+  const embed = new EmbedBuilder()
+    .setColor(0x2dd4bf)
+    .setTitle(`God Draft Complete - Game ${recap.session.game_number}`)
+    .setDescription(match ? `Week ${match.week} - ${homeLabel} vs ${awayLabel}` : `Session ${recap.session.id}`)
+    .addFields(
+      { name: `${homeLabel} Picks`, value: homePicks, inline: true },
+      { name: `${awayLabel} Picks`, value: awayPicks, inline: true },
+      { name: `${homeLabel} Bans`, value: homeBans, inline: true },
+      { name: `${awayLabel} Bans`, value: awayBans, inline: true },
+    )
+    .setFooter({ text: `Draft session ${recap.session.id}` })
+    .setTimestamp();
+
+  if (recap.seriesContinues) {
+    embed.addFields({
+      name: 'Vaulted Next Game',
+      value: recap.vaultedGodNames.length ? recap.vaultedGodNames.join(', ') : 'No picked gods recorded.',
+    });
+  }
+
+  return embed;
+}
+
+function formatDraftRows(rows: Array<{ god_name: string; player_ign?: string | null; slot: number }>, includePlayer: boolean) {
+  if (!rows.length) return 'None recorded';
+  return rows
+    .sort((a, b) => a.slot - b.slot)
+    .map((row, index) => {
+      const player = includePlayer ? ` - ${row.player_ign ?? 'Unassigned'}` : '';
+      return `${index + 1}. ${row.god_name}${player}`;
+    })
+    .join('\n');
 }
