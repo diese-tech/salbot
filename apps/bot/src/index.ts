@@ -2,6 +2,7 @@ import { Client, GatewayIntentBits } from 'discord.js';
 import type { ChatInputCommandInteraction } from 'discord.js';
 import { isAdminUser } from '@salbot/db';
 import { db } from './lib/db';
+import { subscribeToGodDraftRecaps } from './lib/god-draft-recap';
 import { handleProofUpload, activeProofThreads } from './lib/proof-thread';
 
 // Command modules
@@ -48,6 +49,7 @@ client.once('ready', () => {
   console.log(`[bot] Ready as ${client.user?.tag}`);
   console.log(`[bot] Loaded commands: ${[...commands.keys()].join(', ')}`);
   console.log(`[bot] Admin review channel: ${process.env.CHANNEL_ADMIN_REVIEW ?? 'NOT SET'}`);
+  subscribeToGodDraftRecaps(client, db);
 });
 
 // ── Interaction handler ────────────────────────────────────────────────────────────
